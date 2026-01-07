@@ -8,6 +8,8 @@
 #import "RNCNetInfo.h"
 #import "RNCConnectionStateWatcher.h"
 
+#import <NetworkExtension/NetworkExtension.h>
+
 #include <ifaddrs.h>
 #include <arpa/inet.h>
 
@@ -82,10 +84,11 @@ RCT_EXPORT_MODULE()
 
 - (void)connectionStateWatcher:(RNCConnectionStateWatcher *)connectionStateWatcher didUpdateState:(RNCConnectionState *)state
 {
-  if (self.isObserving) {
-    NSDictionary *dictionary = [self currentDictionaryFromUpdateState:state withInterface:NULL];
-    [self sendEventWithName:@"netInfo.networkStatusDidChange" body:dictionary];
-  }
+    if (self.isObserving) {
+        [self currentDictionaryFromUpdateState:state withInterface:NULL completion:^(NSDictionary *result) {
+            [self sendEventWithName:@"netInfo.networkStatusDidChange" body:result];
+        }];
+    }
 }
 
 #pragma mark - Public API
@@ -93,8 +96,10 @@ RCT_EXPORT_MODULE()
 RCT_EXPORT_METHOD(getCurrentState:(nullable NSString *)requestedInterface resolve:(RCTPromiseResolveBlock)resolve
                   reject:(__unused RCTPromiseRejectBlock)reject)
 {
-  RNCConnectionState *state = [self.connectionStateWatcher currentState];
-  resolve([self currentDictionaryFromUpdateState:state withInterface:requestedInterface]);
+    RNCConnectionState *state = [self.connectionStateWatcher currentState];
+    [self currentDictionaryFromUpdateState:state withInterface:requestedInterface completion:^(NSDictionary *result) {
+        resolve(result);
+    }];
 }
 
 RCT_EXPORT_METHOD(configure:(NSDictionary *)config)
@@ -105,43 +110,60 @@ RCT_EXPORT_METHOD(configure:(NSDictionary *)config)
 #pragma mark - Utilities
 
 // Converts the state into a dictionary to send over the bridge
-- (NSDictionary *)currentDictionaryFromUpdateState:(RNCConnectionState *)state withInterface:(nullable NSString *)requestedInterface
+- (void)currentDictionaryFromUpdateState:(RNCConnectionState *)state
+                           withInterface:(nullable NSString *)requestedInterface
+                              completion:(void (^)(NSDictionary *result))completion
 {
-  NSString *selectedInterface = requestedInterface ?: state.type;
-  NSMutableDictionary *details = [self detailsFromInterface:selectedInterface withState:state];
-  bool connected = [state.type isEqualToString:selectedInterface] && state.connected;
-  if (connected) {
-    details[@"isConnectionExpensive"] = @(state.expensive);
-  }
-
-  return @{
-    @"type": selectedInterface,
-    @"isConnected": @(connected),
-    @"details": details ?: NSNull.null
-  };
+    NSString *selectedInterface = requestedInterface ?: state.type;
+    [self detailsFromInterface:selectedInterface withState:state completion:^(NSMutableDictionary *details) {
+        bool connected = [state.type isEqualToString:selectedInterface] && state.connected;
+        if (connected) {
+            details[@"isConnectionExpensive"] = @(state.expensive);
+        }
+        
+        NSDictionary *result =  @{
+            @"type": selectedInterface,
+            @"isConnected": @(connected),
+            @"details": details ?: NSNull.null
+        };
+        
+        completion(result);
+    }];
 }
 
-- (NSMutableDictionary *)detailsFromInterface:(nonnull NSString *)requestedInterface withState:(RNCConnectionState *)state
+- (void)detailsFromInterface:(nonnull NSString *)requestedInterface
+                   withState:(RNCConnectionState *)state
+                  completion:(void (^)(NSMutableDictionary *details))completion
 {
-  NSMutableDictionary *details = [NSMutableDictionary new];
-  if ([requestedInterface isEqualToString: RNCConnectionTypeCellular]) {
-    details[@"cellularGeneration"] = state.cellularGeneration ?: NSNull.null;
-    details[@"carrier"] = [self carrier] ?: NSNull.null;
-  } else if ([requestedInterface isEqualToString: RNCConnectionTypeWifi] || [requestedInterface isEqualToString: RNCConnectionTypeEthernet]) {
-    details[@"ipAddress"] = [self ipAddress] ?: NSNull.null;
-    details[@"subnet"] = [self subnet] ?: NSNull.null;
-    #if !TARGET_OS_TV && !TARGET_OS_OSX && !TARGET_OS_MACCATALYST && !TARGET_OS_VISION
-      /*
-        Without one of the conditions needed to use CNCopyCurrentNetworkInfo, it will leak memory.
-        Clients should only set the shouldFetchWiFiSSID to true after ensuring requirements are met to get (B)SSID.
-      */
-      if (self.config && self.config[@"shouldFetchWiFiSSID"]) {
-        details[@"ssid"] = [self ssid] ?: NSNull.null;
-        details[@"bssid"] = [self bssid] ?: NSNull.null;
-      }
-    #endif
-  }
-  return details;
+    NSMutableDictionary *details = [NSMutableDictionary new];
+    if ([requestedInterface isEqualToString: RNCConnectionTypeCellular]) {
+        details[@"cellularGeneration"] = state.cellularGeneration ?: NSNull.null;
+        details[@"carrier"] = [self carrier] ?: NSNull.null;
+    } else if ([requestedInterface isEqualToString: RNCConnectionTypeWifi] || [requestedInterface isEqualToString: RNCConnectionTypeEthernet]) {
+        details[@"ipAddress"] = [self ipAddress] ?: NSNull.null;
+        details[@"subnet"] = [self subnet] ?: NSNull.null;
+#if !TARGET_OS_TV && !TARGET_OS_OSX && !TARGET_OS_MACCATALYST && !TARGET_OS_VISION
+        /*
+         Without one of the conditions needed to use CNCopyCurrentNetworkInfo, it will leak memory.
+         Clients should only set the shouldFetchWiFiSSID to true after ensuring requirements are met to get (B)SSID.
+         */
+        if (self.config && self.config[@"shouldFetchWiFiSSID"]) {
+            //details[@"ssid"] = [self ssid] ?: NSNull.null;
+            //details[@"bssid"] = [self bssid] ?: NSNull.null;
+            
+            [NEHotspotNetwork fetchCurrentWithCompletionHandler:^(NEHotspotNetwork *network) {
+                if (network) {
+                    details[@"ssid"] = network.SSID ?: NSNull.null;
+                    details[@"bssid"] = network.BSSID ?: NSNull.null;
+                }
+                completion(details);
+            }];
+            return;
+        }
+#endif
+    }
+    
+    completion(details);
 }
 
 - (NSString *)carrier
