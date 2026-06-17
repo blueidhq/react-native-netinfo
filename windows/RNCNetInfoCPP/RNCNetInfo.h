@@ -76,6 +76,12 @@ namespace winrt::ReactNativeNetInfo::implementation {
         REACT_METHOD(getCurrentState);
         winrt::fire_and_forget getCurrentState(std::string requestedInterface, winrt::Microsoft::ReactNative::ReactPromise<NetInfoState> promise) noexcept;
 
+        REACT_METHOD(addListener);
+        void addListener(std::string eventName) noexcept;
+
+        REACT_METHOD(removeListeners);
+        void removeListeners(double count) noexcept;
+
         REACT_EVENT(NetworkStatusChanged, L"netInfo.networkStatusDidChange");
         std::function<void(NetInfoState)> NetworkStatusChanged;
 

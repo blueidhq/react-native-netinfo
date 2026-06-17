@@ -155,6 +155,12 @@ namespace winrt::ReactNativeNetInfo::implementation {
         });
     }
 
+    void RNCNetInfo::addListener(std::string /*eventName*/) noexcept {
+    }
+
+    void RNCNetInfo::removeListeners(double /*count*/) noexcept {
+    }
+
     winrt::fire_and_forget RNCNetInfo::getCurrentState(std::string requestedInterface, winrt::Microsoft::ReactNative::ReactPromise<NetInfoState> promise) noexcept {
         // Jump to background to avoid blocking the JS thread while we gather the requested data
         co_await winrt::resume_background();
